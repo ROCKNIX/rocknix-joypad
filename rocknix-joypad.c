@@ -634,6 +634,30 @@ static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 					&adc->tuning_n))
 					adc->tuning_n = ADC_TUNING_DEFAULT;
 				break;
+			case 4:
+				adc->invert = true;
+				adc->report_type = ABS_Z;
+				if (device_property_read_u32(dev,
+					"abs_z-p-tuning",
+					&adc->tuning_p))
+					adc->tuning_p = ADC_TUNING_DEFAULT;
+				if (device_property_read_u32(dev,
+					"abs_z-n-tuning",
+					&adc->tuning_n))
+					adc->tuning_n = ADC_TUNING_DEFAULT;
+				break;
+			case 5:
+				adc->invert = true;
+				adc->report_type = ABS_RZ;
+				if (device_property_read_u32(dev,
+					"abs_rz-p-tuning",
+					&adc->tuning_p))
+					adc->tuning_p = ADC_TUNING_DEFAULT;
+				if (device_property_read_u32(dev,
+					"abs_rz-n-tuning",
+					&adc->tuning_n))
+					adc->tuning_n = ADC_TUNING_DEFAULT;
+				break;
 			default :
 				dev_err(dev, "%s io channel count(%d) error!",
 					__func__, nbtn);
