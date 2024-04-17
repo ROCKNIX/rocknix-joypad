@@ -111,52 +111,6 @@ struct joypad {
 };
 
 /*----------------------------------------------------------------------------*/
-//
-// set to the value in the boot.ini file. (if exist)
-//
-/*----------------------------------------------------------------------------*/
-static unsigned int g_button_adc_fuzz = 0;
-static unsigned int g_button_adc_flat = 0;
-static unsigned int g_button_adc_scale = 0;
-static unsigned int g_button_adc_deadzone = 0;
-
-static int button_adc_fuzz(char *str)
-{
-	if (!str)
-		return -EINVAL;
-	g_button_adc_fuzz = simple_strtoul(str, NULL, 10);
-	return 0;
-}
-__setup("button-adc-fuzz=", button_adc_fuzz);
-
-static int button_adc_flat(char *str)
-{
-	if (!str)
-		return -EINVAL;
-	g_button_adc_flat = simple_strtoul(str, NULL, 10);
-	return 0;
-}
-__setup("button-adc-flat=", button_adc_flat);
-
-static int button_adc_scale(char *str)
-{
-	if (!str)
-		return -EINVAL;
-	g_button_adc_scale = simple_strtoul(str, NULL, 10);
-	return 0;
-}
-__setup("button-adc-scale=", button_adc_scale);
-
-static int button_adc_deadzone(char *str)
-{
-	if (!str)
-		return -EINVAL;
-	g_button_adc_deadzone = simple_strtoul(str, NULL, 10);
-	return 0;
-}
-__setup("button-adc-deadzone=", button_adc_deadzone);
-
-/*----------------------------------------------------------------------------*/
 static int joypad_adc_read(struct joypad *joypad, struct bt_adc *adc)
 {
 	int value;
@@ -828,50 +782,19 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 }
 
 /*----------------------------------------------------------------------------*/
-static void joypad_setup_value_check(struct device *dev, struct joypad *joypad)
-{
-	/*
-		fuzz: specifies fuzz value that is used to filter noise from
-			the event stream.
-	*/
-	if (g_button_adc_fuzz)
-		joypad->bt_adc_fuzz = g_button_adc_fuzz;
-	else
-		device_property_read_u32(dev, "button-adc-fuzz",
-					&joypad->bt_adc_fuzz);
-	/*
-		flat: values that are within this value will be discarded by
-			joydev interface and reported as 0 instead.
-	*/
-	if (g_button_adc_flat)
-		joypad->bt_adc_flat = g_button_adc_flat;
-	else
-		device_property_read_u32(dev, "button-adc-flat",
-					&joypad->bt_adc_flat);
-
-	/* Joystick report value control */
-	if (g_button_adc_scale)
-		joypad->bt_adc_scale = g_button_adc_scale;
-	else
-		device_property_read_u32(dev, "button-adc-scale",
-					&joypad->bt_adc_scale);
-
-	/* Joystick deadzone value control */
-	if (g_button_adc_deadzone)
-		joypad->bt_adc_deadzone = g_button_adc_deadzone;
-	else
-		device_property_read_u32(dev, "button-adc-deadzone",
-					&joypad->bt_adc_deadzone);
-
-}
-
-/*----------------------------------------------------------------------------*/
 static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 {
 	int error = 0;
 
-	/* initialize value check from boot.ini */
-	joypad_setup_value_check(dev, joypad);
+	/* initialize values from device-tree */
+	device_property_read_u32(dev, "button-adc-fuzz",
+				&joypad->bt_adc_fuzz);
+	device_property_read_u32(dev, "button-adc-flat",
+				&joypad->bt_adc_flat);
+	device_property_read_u32(dev, "button-adc-scale",
+				&joypad->bt_adc_scale);
+	device_property_read_u32(dev, "button-adc-deadzone",
+				&joypad->bt_adc_deadzone);
 
 	joypad->chan_count = of_property_count_strings(dev->of_node,
 		"io-channel-names");
