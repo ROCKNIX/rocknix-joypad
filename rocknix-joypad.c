@@ -155,8 +155,24 @@ static DEVICE_ATTR(poll_interval, S_IWUSR | S_IRUGO,
 /*
  * ATTRIBUTES:
  *
- * /sys/devices/platform/rocknix-joypad/adc_fuzz [r]
+ * /sys/devices/platform/rocknix-joypad/adc_fuzz [rw]
  */
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_store_adc_fuzz(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t count)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	mutex_lock(&joypad->lock);
+	joypad->bt_adc_fuzz = simple_strtoul(buf, NULL, 10);
+	mutex_unlock(&joypad->lock);
+
+	return count;
+}
+
 /*----------------------------------------------------------------------------*/
 static ssize_t joypad_show_adc_fuzz(struct device *dev,
 				     struct device_attribute *attr,
@@ -171,14 +187,30 @@ static ssize_t joypad_show_adc_fuzz(struct device *dev,
 /*----------------------------------------------------------------------------*/
 static DEVICE_ATTR(adc_fuzz, S_IWUSR | S_IRUGO,
 		   joypad_show_adc_fuzz,
-		   NULL);
+		   joypad_store_adc_fuzz);
 
 /*----------------------------------------------------------------------------*/
 /*
  * ATTRIBUTES:
  *
- * /sys/devices/platform/rocknix-joypad/adc_flat [r]
+ * /sys/devices/platform/rocknix-joypad/adc_flat [rw]
  */
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_store_adc_flat(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t count)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	mutex_lock(&joypad->lock);
+	joypad->bt_adc_flat = simple_strtoul(buf, NULL, 10);
+	mutex_unlock(&joypad->lock);
+
+	return count;
+}
+
 /*----------------------------------------------------------------------------*/
 static ssize_t joypad_show_adc_flat(struct device *dev,
 				     struct device_attribute *attr,
@@ -193,7 +225,83 @@ static ssize_t joypad_show_adc_flat(struct device *dev,
 /*----------------------------------------------------------------------------*/
 static DEVICE_ATTR(adc_flat, S_IWUSR | S_IRUGO,
 		   joypad_show_adc_flat,
-		   NULL);
+		   joypad_store_adc_flat);
+
+/*----------------------------------------------------------------------------*/
+/*
+ * ATTRIBUTES:
+ *
+ * /sys/devices/platform/rocknix-joypad/adc_scale [rw]
+ */
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_store_adc_scale(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t count)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	mutex_lock(&joypad->lock);
+	joypad->bt_adc_scale = simple_strtoul(buf, NULL, 10);
+	mutex_unlock(&joypad->lock);
+
+	return count;
+}
+
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_show_adc_scale(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	return sprintf(buf, "%d\n", joypad->bt_adc_scale);
+}
+
+/*----------------------------------------------------------------------------*/
+static DEVICE_ATTR(adc_scale, S_IWUSR | S_IRUGO,
+		   joypad_show_adc_scale,
+		   joypad_store_adc_scale);
+
+/*----------------------------------------------------------------------------*/
+/*
+ * ATTRIBUTES:
+ *
+ * /sys/devices/platform/rocknix-joypad/adc_deadzone [rw]
+ */
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_store_adc_deadzone(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t count)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	mutex_lock(&joypad->lock);
+	joypad->bt_adc_deadzone = simple_strtoul(buf, NULL, 10);
+	mutex_unlock(&joypad->lock);
+
+	return count;
+}
+
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_show_adc_deadzone(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	return sprintf(buf, "%d\n", joypad->bt_adc_deadzone);
+}
+
+/*----------------------------------------------------------------------------*/
+static DEVICE_ATTR(adc_deadzone, S_IWUSR | S_IRUGO,
+		   joypad_show_adc_deadzone,
+		   joypad_store_adc_deadzone);
 
 /*----------------------------------------------------------------------------*/
 /*
@@ -301,6 +409,8 @@ static struct attribute *joypad_attrs[] = {
 	&dev_attr_poll_interval.attr,
 	&dev_attr_adc_fuzz.attr,
 	&dev_attr_adc_flat.attr,
+	&dev_attr_adc_scale.attr,
+	&dev_attr_adc_deadzone.attr,
 	&dev_attr_enable.attr,
 	&dev_attr_adc_cal.attr,
 	NULL,
