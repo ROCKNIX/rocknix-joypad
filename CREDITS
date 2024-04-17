@@ -1,0 +1,5 @@
+Hardkernel for original driver
+https://github.com/hardkernel/linux/blob/odroidgoU-4.9.y/drivers/input/joystick/odroid-gou-joypad.c
+
+littleguy77 for deadzone enhancement
+https://github.com/JustEnoughLinuxOS/distribution/pull/2053
