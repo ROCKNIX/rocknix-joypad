@@ -6,27 +6,16 @@
  */
 
 /*----------------------------------------------------------------------------*/
-#include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/input.h>
 #include <linux/input-polldev.h>
-#include <linux/ioport.h>
 #include <linux/platform_device.h>
-#include <linux/gpio.h>
-#include <linux/gpio/consumer.h>
-#include <linux/gpio_keys.h>
 #include <linux/iio/consumer.h>
-#include <linux/iio/types.h>
-#include <linux/property.h>
 #include <linux/version.h>
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
 #include <linux/of_gpio.h>
 #else
 #include <linux/of_gpio_legacy.h>
 #endif
-#include <linux/delay.h>
-#include <linux/pwm.h>
 #include "rocknix-joypad.h"
 
 /*----------------------------------------------------------------------------*/
