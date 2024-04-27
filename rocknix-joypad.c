@@ -957,10 +957,12 @@ static int joypad_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void joypad_shutdown(struct platform_device *pdev)
+static void joypad_remove(struct platform_device *pdev)
 {
 	struct joypad *joypad = platform_get_drvdata(pdev);
+	struct device *dev = &pdev->dev;
 	input_unregister_polled_device(joypad->poll_dev);
+	sysfs_remove_group(&pdev->dev.kobj, &joypad_attr_group);
 }
 /*----------------------------------------------------------------------------*/
 static const struct of_device_id joypad_of_match[] = {
@@ -973,7 +975,7 @@ MODULE_DEVICE_TABLE(of, joypad_of_match);
 /*----------------------------------------------------------------------------*/
 static struct platform_driver joypad_driver = {
 	.probe = joypad_probe,
-	.shutdown = joypad_shutdown,
+	.remove = joypad_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = of_match_ptr(joypad_of_match),
