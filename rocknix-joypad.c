@@ -94,9 +94,6 @@ struct joypad {
 	int bt_adc_deadzone;
 
 	struct mutex lock;
-
-	/* adc debug channel */
-	int debug_ch;
 };
 
 /*----------------------------------------------------------------------------*/
@@ -771,15 +768,6 @@ static int joypad_gpio_setup(struct device *dev, struct joypad *joypad)
 					gpio->num, error);
 				return error;
 			}
-			#if 0
-			error = gpiod_set_pull(gpio_to_desc(gpio->num), GPIOD_PULL_UP);
-			if (error < 0) {
-				dev_err(dev,
-					"Failed to set pull-up GPIO %d, error %d\n",
-					gpio->num, error);
-				return error;
-			}
-			#endif
 		}
 		if (of_property_read_u32(pp, "linux,code", &gpio->linux_code)) {
 			dev_err(dev, "Button without keycode: 0x%x\n",
