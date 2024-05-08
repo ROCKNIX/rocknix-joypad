@@ -987,9 +987,6 @@ static int joypad_probe(struct platform_device *pdev)
 
 static int joypad_remove(struct platform_device *pdev)
 {
-	struct joypad *joypad = platform_get_drvdata(pdev);
-	struct device *dev = &pdev->dev;
-	input_unregister_polled_device(joypad->poll_dev);
 	sysfs_remove_group(&pdev->dev.kobj, &joypad_attr_group);
 
 	return 0;

@@ -18,6 +18,7 @@
 #endif
 #include <linux/delay.h>
 #include <linux/pwm.h>
+#include "rocknix-joypad.h"
 
 /*----------------------------------------------------------------------------*/
 #define DRV_NAME "rocknix-singleadc-joypad"
@@ -72,7 +73,6 @@ struct bt_gpio {
 
 struct joypad {
 	struct device *dev;
-	struct input_polled_dev	*poll_dev;
 	int poll_interval;
 
 	/* report enable/disable */
@@ -533,7 +533,7 @@ static ssize_t joypad_show_period(struct device *dev,
 	struct platform_device *pdev  = to_platform_device(dev);
 	struct joypad *joypad = platform_get_drvdata(pdev);
 
-	return sprintf(buf, "%d\n", pwm_get_period(joypad->pwm));
+	return sprintf(buf, "%llu\n", pwm_get_period(joypad->pwm));
 }
 
 /*----------------------------------------------------------------------------*/
@@ -1208,7 +1208,6 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 		__set_bit(EV_REP, input->evbit);
 
 	joypad->dev = dev;
-	joypad->poll_dev = poll_dev;
 
 	error = input_register_polled_device(poll_dev);
 	if (error) {
@@ -1277,8 +1276,10 @@ static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 	return error;
 }
 
-static int __maybe_unused joypad_suspend(struct joypad *joypad)
+static int __maybe_unused joypad_suspend(struct device *dev)
 {
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
 	if (joypad->has_rumble) {
 		cancel_work_sync(&joypad->play_work);
 		if (joypad->level)
@@ -1287,8 +1288,10 @@ static int __maybe_unused joypad_suspend(struct joypad *joypad)
 	return 0;
 }
 
-static int __maybe_unused joypad_resume(struct joypad *joypad)
+static int __maybe_unused joypad_resume(struct device *dev)
 {
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
 	if (joypad->has_rumble) {
 		if (joypad->level)
 			 pwm_vibrator_start(joypad);
@@ -1358,10 +1361,8 @@ static int joypad_probe(struct platform_device *pdev)
 static int joypad_remove(struct platform_device *pdev)
 {
 	struct joypad *joypad = platform_get_drvdata(pdev);
-	struct device *dev = &pdev->dev;
-	input_unregister_polled_device(joypad->poll_dev);
 	sysfs_remove_group(&pdev->dev.kobj, &joypad_attr_group);
-	if (has_rumble(dev))
+	if (joypad->has_rumble)
 		sysfs_remove_group(&pdev->dev.kobj, &joypad_rumble_attr_group);
 
 	return 0;
