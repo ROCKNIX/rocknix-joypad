@@ -117,6 +117,8 @@ struct joypad {
 	u16 has_rumble;
 };
 
+extern struct input_dev * joypad_input_g;
+
 /*----------------------------------------------------------------------------*/
 static bool has_rumble(struct device *dev)
 {
@@ -1043,29 +1045,6 @@ static int joypad_gpio_setup(struct device *dev, struct joypad *joypad)
 
 	return	0;
 }
-
-/*----------------------------------------------------------------------------*/
-struct input_dev * joypad_input_g;
-
-void rk_send_key_f_key_up(void)
-{
-	if (!joypad_input_g)
-		return;
-
-	input_report_key(joypad_input_g, BTN_MODE, 1);
-	input_sync(joypad_input_g);
-}
-EXPORT_SYMBOL(rk_send_key_f_key_up);
-
-void rk_send_key_f_key_down(void)
-{
-	if (!joypad_input_g)
-		return;
-
-	input_report_key(joypad_input_g, BTN_MODE, 0);
-	input_sync(joypad_input_g);
-}
-EXPORT_SYMBOL(rk_send_key_f_key_down);
 
 /*----------------------------------------------------------------------------*/
 static int rumble_play_effect(struct input_dev *dev, void *data, struct ff_effect *effect)

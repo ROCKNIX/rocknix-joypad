@@ -15,6 +15,3 @@
 #define SARADC_CH7      7
 
 #define SARADC_CH_NUM 8
-
-void rk_send_key_f_key_up(void);
-void rk_send_key_f_key_down(void);
