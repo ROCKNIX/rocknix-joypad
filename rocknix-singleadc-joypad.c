@@ -782,8 +782,6 @@ static void joypad_open(struct input_polled_dev *poll_dev)
 			continue;
 		}
 		adc->cal = adc->value;
-		dev_info(joypad->dev, "%s : adc[%d] adc->cal = %d\n",
-			__func__, nbtn, adc->cal);
 	}
 	/* buttons status sync */
 	joypad_adc_check(poll_dev);
@@ -793,8 +791,6 @@ static void joypad_open(struct input_polled_dev *poll_dev)
 	mutex_lock(&joypad->lock);
 	joypad->enable = true;
 	mutex_unlock(&joypad->lock);
-
-	dev_info(joypad->dev, "%s : opened\n", __func__);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -811,8 +807,6 @@ static void joypad_close(struct input_polled_dev *poll_dev)
 	mutex_lock(&joypad->lock);
 	joypad->enable = false;
 	mutex_unlock(&joypad->lock);
-
-	dev_info(joypad->dev, "%s : closed\n", __func__);
 }
 
 /*----------------------------------------------------------------------------*/
