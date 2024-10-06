@@ -897,6 +897,17 @@ err_out:
 static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 {
 	int nbtn;
+	u32 channel_mapping[] = {0, 1, 2, 3};
+
+	if (device_property_present(dev, "amux-channel-mapping")) {
+		int ret;
+		ret = of_property_read_u32_array(dev->of_node,
+				"amux-channel-mapping", channel_mapping, 4);
+		if (ret < 0) {
+			dev_err(dev, "invalid channel mapping\n");
+			return -EINVAL;
+		}
+	}
 
 	/* adc button struct init */
 	joypad->adcs = devm_kzalloc(dev, joypad->amux_count *
@@ -917,7 +928,6 @@ static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 			adc->max *= adc->scale;
 			adc->min *= adc->scale;
 		}
-		adc->amux_ch = nbtn;
 		adc->invert = false;
 
 		switch (nbtn) {
@@ -978,6 +988,7 @@ static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 					__func__, nbtn);
 				return -EINVAL;
 		}
+		adc->amux_ch = channel_mapping[nbtn];
 	}
 	return	0;
 }
