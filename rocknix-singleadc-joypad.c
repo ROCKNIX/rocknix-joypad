@@ -1331,14 +1331,12 @@ static int joypad_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int joypad_remove(struct platform_device *pdev)
+static void joypad_remove(struct platform_device *pdev)
 {
 	struct joypad *joypad = platform_get_drvdata(pdev);
 	sysfs_remove_group(&pdev->dev.kobj, &joypad_attr_group);
 	if (joypad->has_rumble)
 		sysfs_remove_group(&pdev->dev.kobj, &joypad_rumble_attr_group);
-
-	return 0;
 }
 /*----------------------------------------------------------------------------*/
 static const struct of_device_id joypad_of_match[] = {
@@ -1351,7 +1349,7 @@ MODULE_DEVICE_TABLE(of, joypad_of_match);
 /*----------------------------------------------------------------------------*/
 static struct platform_driver joypad_driver = {
 	.probe = joypad_probe,
-	.remove = joypad_remove,
+	.remove_new = joypad_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.pm = &joypad_pm_ops,
