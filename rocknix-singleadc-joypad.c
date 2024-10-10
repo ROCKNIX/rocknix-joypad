@@ -140,7 +140,11 @@ static int pwm_vibrator_start(struct joypad *joypad)
 	pwm_set_relative_duty_cycle(&state, joypad->level, 0xffff);
 	state.enabled = true;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	err = pwm_apply_state(joypad->pwm, &state);
+#else
+	err = pwm_apply_might_sleep(joypad->pwm, &state);
+#endif
 	if (err) {
 		 dev_err(pdev, "failed to apply pwm state: %d", err);
 		 return err;
@@ -1078,7 +1082,11 @@ static int joypad_rumble_setup(struct device *dev, struct joypad *joypad)
 	pwm_init_state(joypad->pwm, &state);
 	state.enabled = false;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	error = pwm_apply_state(joypad->pwm, &state);
+#else
+	error = pwm_apply_might_sleep(joypad->pwm, &state);
+#endif
 	if (error) {
 		 dev_err(dev, "failed to apply initial PWM state: %d",
 			 error);
