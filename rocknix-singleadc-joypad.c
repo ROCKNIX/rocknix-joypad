@@ -1149,7 +1149,9 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	input->id.version = (u16)joypad_revision;
 
 	/* IIO ADC key setup (0 mv ~ 1800 mv) * adc->scale */
-	__set_bit(EV_ABS, input->evbit);
+	if (joypad->amux_count > 0) {
+		__set_bit(EV_ABS, input->evbit);
+	}
 
 	// Set mapped ones on dt
 	for(nbtn = 0; nbtn < joypad->amux_count; nbtn++) {
@@ -1244,19 +1246,21 @@ static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 
 	joypad->bt_gpio_count = device_get_child_node_count(dev);
 
-	if ((joypad->amux_count == 0) || (joypad->bt_gpio_count == 0)) {
+	if ((joypad->amux_count == 0) && (joypad->bt_gpio_count == 0)) {
 		dev_err(dev, "adc key = %d, gpio key = %d error!",
 			joypad->amux_count, joypad->bt_gpio_count);
 		return -EINVAL;
 	}
 
-	error = joypad_adc_setup(dev, joypad);
-	if (error)
-		return error;
+	if (joypad->amux_count > 0) {
+		error = joypad_adc_setup(dev, joypad);
+		if (error)
+			return error;
 
-	error = joypad_amux_setup(dev, joypad);
-	if (error)
-		return error;
+		error = joypad_amux_setup(dev, joypad);
+		if (error)
+			return error;
+	}
 
 	error = joypad_gpio_setup(dev, joypad);
 	if (error)
