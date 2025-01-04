@@ -20,6 +20,16 @@
 #include <linux/pwm.h>
 #include "rocknix-joypad.h"
 
+#include <linux/kthread.h>
+#include <linux/tty.h>
+#include <linux/tty_driver.h>
+#include <linux/tty_flip.h>
+#include <linux/fs.h>
+#include <linux/termios.h>
+#include <linux/uaccess.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
+
 /*----------------------------------------------------------------------------*/
 #define DRV_NAME "rocknix-singleadc-joypad"
 /*----------------------------------------------------------------------------*/
@@ -27,6 +37,9 @@
 #define	ADC_DATA_TUNING(x, p)	((x * p) / 100)
 #define	ADC_TUNING_DEFAULT	180
 #define	CLAMP(x, low, high)  (((x) > (high)) ? (high) : (((x) < (low)) ? (low) : (x)))
+
+/* We add a 5s inactivity timeout for re-opening ttyS1 */
+#define MIYOO_SERIAL_INACTIVITY_TIMEOUT (5 * HZ)
 
 struct bt_adc {
 	/* report value (mV) */
@@ -70,6 +83,85 @@ struct bt_gpio {
 	/* button press level */
 	bool active_level;
 };
+
+/* Replicate the calibration and constants from the userland code. */
+#define MIYOO_FRAME_SIZE        6
+#define MIYOO_MAGIC_START       0xFF
+#define MIYOO_MAGIC_END         0xFE
+
+/* For calibrating final ranges to [-32760..32760] */
+#define MIYOO_AXIS_MIN          (-32760)
+#define MIYOO_AXIS_MAX          ( 32760)
+
+/* We'll gather 50 frames for auto-cal */
+#define MIYOO_CALIBRATION_FRAMES    50
+
+/* We'll use a default 10% radial deadzone ratio for example */
+static float miyoo_deadzone_ratio = 0.10f;
+
+struct miyoo_cal {
+	int x_min;
+	int x_max;
+	int x_zero;
+	int y_min;
+	int y_max;
+	int y_zero;
+};
+
+/*
+ * We'll store the "left stick" and "right stick" calibrations
+ * plus live data for the Miyoo serial approach
+ */
+struct miyoo_serial_stick {
+	struct miyoo_cal left_cal;
+	struct miyoo_cal right_cal;
+
+	/* We keep the last parsed values for x,y each stick */
+	int left_x;
+	int left_y;
+	int right_x;
+	int right_y;
+};
+
+/* A forward-declare for our kernel thread function */
+static int miyoo_serial_threadfn(void *data);
+
+/*
+ * We'll define a helper that directly manipulates the tty struct
+ * instead of doing an ioctl() with a kernel pointer.
+ */
+static void set_tty_9600_8N1(struct file *filp)
+{
+	struct tty_file_private *file_priv;
+	struct tty_struct *tty;
+	struct ktermios newt;
+
+	if (!filp || !filp->private_data)
+		return;
+
+	/* filp->private_data is typically a struct tty_file_private if this is a TTY */
+	file_priv = filp->private_data;
+	if (!file_priv || !file_priv->tty)
+		return;
+
+	tty = file_priv->tty;
+
+	/* Copy existing termios and modify it in-kernel. */
+	newt = tty->termios;
+	newt.c_iflag = 0;
+	newt.c_oflag = 0;
+	newt.c_cflag = B9600 | CS8 | CREAD | CLOCAL;
+	newt.c_lflag = 0;
+	memset(newt.c_cc, 0, NCCS);
+	newt.c_cc[VMIN]  = 1;
+	newt.c_cc[VTIME] = 0;
+
+	/*
+	 * This bypasses the userland copy checks, because we are
+	 * operating in kernel space.
+	 */
+	tty_set_termios(tty, &newt);
+}
 
 struct joypad {
 	struct device *dev;
@@ -115,6 +207,30 @@ struct joypad {
 	u16 boost_weak;
 	u16 boost_strong;
 	u16 has_rumble;
+
+
+	/* New property to override logic with Miyoo serial approach */
+	bool use_miyoo_serial;
+	/*
+	 * We store everything for the Miyoo logic:
+	 *   - calibration data
+	 *   - kernel thread
+	 *   - file pointer, etc.
+	 */
+	struct miyoo_serial_stick miyoo;
+	struct task_struct *miyoo_thread;
+	struct file *miyoo_filp;
+
+	/*
+	 * We'll do a delayed work item to do the TTY initialization
+	 * after the driver has finished loading. This ensures we
+	 * don't block the kernel boot.
+	 */
+	struct delayed_work miyoo_init_work;
+
+	/* For detecting inactivity on the Miyoo TTY */
+	unsigned long last_data_jiffies;
+
 };
 
 extern struct input_dev * joypad_input_g;
@@ -756,8 +872,23 @@ static void joypad_poll(struct input_polled_dev *poll_dev)
 	struct joypad *joypad = poll_dev->private;
 
 	if (joypad->enable) {
-		joypad_adc_check(poll_dev);
-		joypad_gpio_check(poll_dev);
+		if (joypad->use_miyoo_serial) {
+			/*
+			 * Instead of ADC, we rely on the data read in
+			 * our miyoo_serial_threadfn(). We'll just do
+			 * input_report_abs here from the stored values.
+			 */
+			input_report_abs(poll_dev->input, ABS_X,  joypad->miyoo.left_x);
+			input_report_abs(poll_dev->input, ABS_Y,  joypad->miyoo.left_y);
+			input_report_abs(poll_dev->input, ABS_RX, joypad->miyoo.right_x);
+			input_report_abs(poll_dev->input, ABS_RY, joypad->miyoo.right_y);
+			input_sync(poll_dev->input);
+
+			joypad_gpio_check(poll_dev);
+		} else {
+			joypad_adc_check(poll_dev);
+			joypad_gpio_check(poll_dev);
+		}
 	}
 	if (poll_dev->poll_interval != joypad->poll_interval) {
 		mutex_lock(&joypad->lock);
@@ -1149,7 +1280,11 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	input->id.version = (u16)joypad_revision;
 
 	/* IIO ADC key setup (0 mv ~ 1800 mv) * adc->scale */
-	if (joypad->amux_count > 0) {
+	/*
+	 * We always want 4 axes available if using Miyoo
+	 * or if we have actual amux_count > 0
+	 */
+	if (joypad->amux_count > 0 || joypad->use_miyoo_serial) {
 		__set_bit(EV_ABS, input->evbit);
 	}
 
@@ -1169,6 +1304,21 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 		dev_info(dev,
 			"%s : adc tuning_p = %d, adc_tuning_n = %d\n\n",
 			__func__, adc->tuning_p, adc->tuning_n);
+	}
+
+	/*
+	 * For the Miyoo serial approach, we’ll also ensure that
+	 * ABS_X, ABS_Y, ABS_RX, ABS_RY are defined ([-32760..32760]) if used:
+	 */
+	if (joypad->use_miyoo_serial) {
+		input_set_abs_params(input, ABS_X,
+				     MIYOO_AXIS_MIN, MIYOO_AXIS_MAX, 16, 16);
+		input_set_abs_params(input, ABS_Y,
+				     MIYOO_AXIS_MIN, MIYOO_AXIS_MAX, 16, 16);
+		input_set_abs_params(input, ABS_RX,
+				     MIYOO_AXIS_MIN, MIYOO_AXIS_MAX, 16, 16);
+		input_set_abs_params(input, ABS_RY,
+				     MIYOO_AXIS_MIN, MIYOO_AXIS_MAX, 16, 16);
 	}
 
 	/* Rumble setup */
@@ -1213,6 +1363,288 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	return 0;
 }
 
+/*
+ * Utility for calibration & applying radial deadzone 
+ * (mirroring the userland logic from miyoostick).
+ */
+static int miyoo_calibrate_axis_x(const struct miyoo_cal *cal, int raw)
+{
+    int rangePos, rangeNeg, result;
+
+    if (!cal)
+        return 0;
+
+    rangePos = cal->x_max - cal->x_zero;
+    rangeNeg = cal->x_zero - cal->x_min;
+    result = 0;
+
+	if (raw > cal->x_zero) {
+		int diff = raw - cal->x_zero;
+		if (rangePos != 0) {
+			result = (diff * MIYOO_AXIS_MAX) / rangePos;
+			if (result > MIYOO_AXIS_MAX) result = MIYOO_AXIS_MAX;
+		}
+	} else if (raw < cal->x_zero) {
+		int diff = cal->x_zero - raw;
+		if (rangeNeg != 0) {
+			result = -(diff * (-MIYOO_AXIS_MIN)) / rangeNeg;
+			if (result < MIYOO_AXIS_MIN) result = MIYOO_AXIS_MIN;
+		}
+	}
+	return result;
+}
+
+static int miyoo_calibrate_axis_y(const struct miyoo_cal *cal, int raw)
+{
+    int rangePos, rangeNeg, result;
+
+    if (!cal)
+        return 0;
+
+    rangePos = cal->y_max - cal->y_zero;
+    rangeNeg = cal->y_zero - cal->y_min;
+    result = 0;
+
+	if (raw > cal->y_zero) {
+		int diff = raw - cal->y_zero;
+		if (rangePos != 0) {
+			result = (diff * MIYOO_AXIS_MAX) / rangePos;
+			if (result > MIYOO_AXIS_MAX) result = MIYOO_AXIS_MAX;
+		}
+	} else if (raw < cal->y_zero) {
+		int diff = cal->y_zero - raw;
+		if (rangeNeg != 0) {
+			result = -(diff * (-MIYOO_AXIS_MIN)) / rangeNeg;
+			if (result < MIYOO_AXIS_MIN) result = MIYOO_AXIS_MIN;
+		}
+	}
+	return result;
+}
+
+static void miyoo_apply_deadzone(int *px, int *py)
+{
+	int x = *px;
+	int y = *py;
+	long long magSq = (long long)x * x + (long long)y * y;
+	long long dead = (long long)(miyoo_deadzone_ratio * MIYOO_AXIS_MAX);
+	long long deadSq = dead * dead;
+
+	if (magSq <= deadSq) {
+		*px = 0;
+		*py = 0;
+	}
+}
+/*----------------------------------------------------------------------------*/
+static int miyoo_autocal(struct joypad *joypad)
+{
+	long sumYL = 0, sumXL = 0, sumYR = 0, sumXR = 0;
+	int framesRead = 0;
+	unsigned char buf[MIYOO_FRAME_SIZE];
+
+	dev_info(joypad->dev, "Auto-calibration: reading %d frames...", MIYOO_CALIBRATION_FRAMES);
+
+	while (framesRead < MIYOO_CALIBRATION_FRAMES) {
+		ssize_t n = kernel_read(joypad->miyoo_filp, buf, MIYOO_FRAME_SIZE, &joypad->miyoo_filp->f_pos);
+		if (n < 0) {
+			dev_err(joypad->dev, "Auto-cal read error: %zd\n", n);
+			msleep(10);
+			continue;
+		}
+		if (n < MIYOO_FRAME_SIZE) {
+			msleep(10);
+			continue;
+		}
+		if (buf[0] == MIYOO_MAGIC_START && buf[5] == MIYOO_MAGIC_END) {
+			sumYL += buf[1];
+			sumXL += buf[2];
+			sumYR += buf[3];
+			sumXR += buf[4];
+			framesRead++;
+		}
+	}
+
+	if (framesRead == 0) {
+		dev_err(joypad->dev, "No calibration frames read!\n");
+		return -EIO;
+	}
+	{
+		int avgYL = sumYL / framesRead;
+		int avgXL = sumXL / framesRead;
+		int avgYR = sumYR / framesRead;
+		int avgXR = sumXR / framesRead;
+		dev_info(joypad->dev, "  Average YL=%d, XL=%d, YR=%d, XR=%d\n",
+			 avgYL, avgXL, avgYR, avgXR);
+
+		joypad->miyoo.left_cal.x_zero  = avgXL;
+		joypad->miyoo.left_cal.y_zero  = avgYL;
+		joypad->miyoo.right_cal.x_zero = avgXR;
+		joypad->miyoo.right_cal.y_zero = avgYR;
+	}
+	dev_info(joypad->dev, "Auto-calibration complete.\n");
+	return 0;
+}
+
+static void miyoo_parse_frame(struct joypad *joypad, unsigned char *frame)
+{
+	if (frame[0] != MIYOO_MAGIC_START || frame[5] != MIYOO_MAGIC_END) {
+		return;
+	}
+
+	/* We got a valid frame, so reset our inactivity timer */
+	joypad->last_data_jiffies = jiffies;
+
+	{
+		int rawYL = frame[1];
+		int rawXL = frame[2];
+		int rawYR = frame[3];
+		int rawXR = frame[4];
+
+		int lx = miyoo_calibrate_axis_x(&joypad->miyoo.left_cal, rawXL);
+		int ly = miyoo_calibrate_axis_y(&joypad->miyoo.left_cal, rawYL);
+		int rx = miyoo_calibrate_axis_x(&joypad->miyoo.right_cal, rawXR);
+		int ry = miyoo_calibrate_axis_y(&joypad->miyoo.right_cal, rawYR);
+
+		miyoo_apply_deadzone(&lx, &ly);
+		miyoo_apply_deadzone(&rx, &ry);
+
+		joypad->miyoo.left_x  = lx;
+		joypad->miyoo.left_y  = ly;
+		joypad->miyoo.right_x = rx;
+		joypad->miyoo.right_y = ry;
+	}
+}
+
+/* 
+ * We'll factor out open/close so we can easily reopen after inactivity.
+ */
+static int miyoo_serial_open(struct joypad *joypad)
+{
+	struct file *filp;
+
+	filp = filp_open("/dev/ttyS1", O_RDWR | O_NOCTTY, 0);
+	if (IS_ERR(filp)) {
+		dev_err(joypad->dev, "ERROR: open /dev/ttyS1 failed: %ld\n", PTR_ERR(filp));
+		return PTR_ERR(filp);
+	}
+	joypad->miyoo_filp = filp;
+
+	/* 
+	 * Instead of doing an ioctl() with a kernel pointer, 
+	 * we set 9600 8N1 by manipulating the underlying tty->termios directly.
+	 */
+	set_tty_9600_8N1(filp);
+
+	dev_info(joypad->dev, "Opened serial port /dev/ttyS1 and set 9600 8N1 (in-kernel).\n");
+	return 0;
+}
+
+static void miyoo_serial_close(struct joypad *joypad)
+{
+	if (joypad->miyoo_filp) {
+		dev_info(joypad->dev, "Closing /dev/ttyS1.\n");
+		filp_close(joypad->miyoo_filp, NULL);
+		joypad->miyoo_filp = NULL;
+	}
+}
+
+static int miyoo_serial_threadfn(void *data)
+{
+	struct joypad *joypad = data;
+	unsigned char frame[MIYOO_FRAME_SIZE];
+
+	dev_info(joypad->dev, "Starting Miyoo serial read loop.\n");
+
+	while (!kthread_should_stop()) {
+		ssize_t n = kernel_read(joypad->miyoo_filp, frame, MIYOO_FRAME_SIZE, &joypad->miyoo_filp->f_pos);
+		if (n < 0) {
+			dev_err(joypad->dev, "Serial read error: %zd\n", n);
+			msleep(10);
+			continue;
+		}
+		if (n < MIYOO_FRAME_SIZE) {
+			msleep(10);
+			continue;
+		}
+		miyoo_parse_frame(joypad, frame);
+
+		/*
+		 * Check for inactivity. If we haven't received a valid frame for
+		 * MIYOO_SERIAL_INACTIVITY_TIMEOUT jiffies, re-init the port.
+		 */
+		if (time_after(jiffies, joypad->last_data_jiffies + MIYOO_SERIAL_INACTIVITY_TIMEOUT)) {
+			dev_warn(joypad->dev, "No data from /dev/ttyS1 for 5s; re-opening TTY.\n");
+
+			/* Step 1: close the old filp */
+			miyoo_serial_close(joypad);
+
+			/* Step 2: attempt to reopen the TTY */
+			if (miyoo_serial_open(joypad) == 0) {
+				/*
+				 * We do NOT re-auto-cal on reconnection, per request.
+				 * Just reset the timer so we won't keep re-opening.
+				 */
+				joypad->last_data_jiffies = jiffies;
+				dev_info(joypad->dev, "TTY re-init success!\n");
+			} else {
+				dev_err(joypad->dev,
+					"Failed to re-open /dev/ttyS1; will retry in loop.\n");
+				/*
+				 * If the open fails, the next iteration of the loop 
+				 * will keep failing reads until a successful open.
+				 */
+			}
+		}
+	}
+
+	dev_info(joypad->dev, "Miyoo serial thread exiting.\n");
+	return 0;
+}
+
+static int miyoo_start_serial(struct joypad *joypad)
+{
+	int ret;
+	
+	dev_info(joypad->dev, "Starting /dev/ttyS1 init after driver load.\n");
+
+	ret = miyoo_serial_open(joypad);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * We do an initial auto-cal here if desired. 
+	 * This is the only time we'll calibrate, not on reconnection.
+	 */
+	ret = miyoo_autocal(joypad);
+	if (ret < 0) {
+		dev_err(joypad->dev, "Auto-calibration failed: %d\n", ret);
+		/* We can continue, but the user won't have a correct zero. */
+	}
+
+	joypad->miyoo_thread = kthread_run(miyoo_serial_threadfn, joypad, "miyoo-serial-thread");
+	if (IS_ERR(joypad->miyoo_thread)) {
+		dev_err(joypad->dev, "Failed to create Miyoo serial thread.\n");
+		miyoo_serial_close(joypad);
+		return PTR_ERR(joypad->miyoo_thread);
+	}
+
+	joypad->last_data_jiffies = jiffies;
+
+	dev_info(joypad->dev, "Miyoo serial logic started successfully!\n");
+	return 0;
+}
+
+/*
+ * We'll define a delayed work function that calls miyoo_start_serial()
+ * after 10 seconds. This ensures the driver loads fully first.
+ */
+static void miyoo_delayed_init_workfn(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct joypad *joypad = container_of(dwork, struct joypad, miyoo_init_work);
+
+	miyoo_start_serial(joypad);
+}
+
 /*----------------------------------------------------------------------------*/
 static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 {
@@ -1249,9 +1681,11 @@ static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 	if ((joypad->amux_count == 0) && (joypad->bt_gpio_count == 0)) {
 		dev_err(dev, "adc key = %d, gpio key = %d error!",
 			joypad->amux_count, joypad->bt_gpio_count);
-		return -EINVAL;
+		/* not a fatal error if we are using Miyoo,
+		   but let's keep it for safety (later we'll override). */
 	}
 
+	error = 0;
 	if (joypad->amux_count > 0) {
 		error = joypad_adc_setup(dev, joypad);
 		if (error)
@@ -1268,6 +1702,34 @@ static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 
 	dev_info(dev, "%s : adc key cnt = %d, gpio key cnt = %d\n",
 			__func__, joypad->amux_count, joypad->bt_gpio_count);
+
+	joypad->use_miyoo_serial =
+		device_property_present(dev, "rocknix,use-miyoo-serial-joypad");
+	if (joypad->use_miyoo_serial) {
+		dev_info(dev, "%s : using Miyoo Serial Joypad logic\n", __func__);
+		/*
+		 * We'll define some default calibrations for raw [85..200]
+		 * from your original userland code, so that x_zero=130, etc.
+		 */
+		joypad->miyoo.left_cal.x_min = 85;
+		joypad->miyoo.left_cal.x_max = 200;
+		joypad->miyoo.left_cal.x_zero= 130;
+		joypad->miyoo.left_cal.y_min = 85;
+		joypad->miyoo.left_cal.y_max = 200;
+		joypad->miyoo.left_cal.y_zero= 130;
+
+		joypad->miyoo.right_cal.x_min = 85;
+		joypad->miyoo.right_cal.x_max = 200;
+		joypad->miyoo.right_cal.x_zero= 130;
+		joypad->miyoo.right_cal.y_min = 85;
+		joypad->miyoo.right_cal.y_max = 200;
+		joypad->miyoo.right_cal.y_zero= 130;
+
+		joypad->miyoo.left_x  = 0;
+		joypad->miyoo.left_y  = 0;
+		joypad->miyoo.right_x = 0;
+		joypad->miyoo.right_y = 0;
+	}
 
 	return error;
 }
@@ -1350,6 +1812,15 @@ static int joypad_probe(struct platform_device *pdev)
 		}
 	}
 
+	if (joypad->use_miyoo_serial) {
+		/*
+		 * Instead of blocking in probe or using a separate boot
+		 * thread, we schedule a delayed work for 10 seconds.
+		 */
+		INIT_DELAYED_WORK(&joypad->miyoo_init_work, miyoo_delayed_init_workfn);
+		schedule_delayed_work(&joypad->miyoo_init_work, 10 * HZ);
+	}
+
 	dev_info(dev, "%s : probe success\n", __func__);
 	return 0;
 }
@@ -1357,9 +1828,24 @@ static int joypad_probe(struct platform_device *pdev)
 static void joypad_remove(struct platform_device *pdev)
 {
 	struct joypad *joypad = platform_get_drvdata(pdev);
+
 	sysfs_remove_group(&pdev->dev.kobj, &joypad_attr_group);
 	if (joypad->has_rumble)
 		sysfs_remove_group(&pdev->dev.kobj, &joypad_rumble_attr_group);
+
+	if (joypad->use_miyoo_serial) {
+		/* Cancel any delayed work if it's not run yet */
+		cancel_delayed_work_sync(&joypad->miyoo_init_work);
+		if (joypad->miyoo_thread) {
+			kthread_stop(joypad->miyoo_thread);
+			joypad->miyoo_thread = NULL;
+		}
+		if (joypad->miyoo_filp) {
+			filp_close(joypad->miyoo_filp, NULL);
+			joypad->miyoo_filp = NULL;
+		}
+		dev_info(joypad->dev, "Miyoo serial logic stopped.\n");
+	}
 }
 /*----------------------------------------------------------------------------*/
 static const struct of_device_id joypad_of_match[] = {
