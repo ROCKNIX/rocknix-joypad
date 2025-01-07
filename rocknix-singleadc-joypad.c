@@ -248,7 +248,6 @@ static bool has_rumble(struct device *dev)
 /*----------------------------------------------------------------------------*/
 static int pwm_vibrator_start(struct joypad *joypad)
 {
-	struct device *pdev = joypad->input->dev.parent;
 	struct pwm_state state;
 	int err;
 
@@ -262,7 +261,7 @@ static int pwm_vibrator_start(struct joypad *joypad)
 	err = pwm_apply_might_sleep(joypad->pwm, &state);
 #endif
 	if (err) {
-		 dev_err(pdev, "failed to apply pwm state: %d", err);
+		 dev_err(joypad->dev, "failed to apply pwm state: %d", err);
 		 return err;
 	}
 
@@ -1201,7 +1200,6 @@ static int rumble_play_effect(struct input_dev *dev, void *data, struct ff_effec
 
 	joypad->level = (u16)CLAMP(boosted_level, 0, 0xffff);
 
-	dev_info(joypad->dev, "joypad->level = %d", joypad->level);
 	schedule_work(&joypad->play_work);
 	return 0;
 }
