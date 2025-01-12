@@ -207,6 +207,7 @@ struct joypad {
 	u16 boost_weak;
 	u16 boost_strong;
 	bool has_rumble;
+	bool rumble_enabled; /* to turn rumble on/off if a device has it */
 
 
 	/* New property to override logic with Miyoo serial approach */
@@ -266,11 +267,19 @@ static void pwm_vibrator_play_work(struct work_struct *work)
 {
 	struct joypad *joypad = container_of(work,
 					    struct joypad, play_work);
+	mutex_lock(&joypad->lock);
+	if (!joypad->rumble_enabled) {
+		pwm_vibrator_stop(joypad);
+		mutex_unlock(&joypad->lock);
+		return;
+	}
 
 	if (joypad->level)
 		 pwm_vibrator_start(joypad);
 	else
 		 pwm_vibrator_stop(joypad);
+
+	mutex_unlock(&joypad->lock);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -629,7 +638,7 @@ static ssize_t joypad_store_period(struct device *dev,
 	struct joypad *joypad = platform_get_drvdata(pdev);
 
 	mutex_lock(&joypad->lock);
-	pwm_set_period(joypad->pwm, simple_strtoul(buf, NULL, 21));
+	pwm_set_period(joypad->pwm, simple_strtoul(buf, NULL, 10));
 	mutex_unlock(&joypad->lock);
 
 	return count;
@@ -730,6 +739,49 @@ static DEVICE_ATTR(rumble_boost_weak, S_IWUSR | S_IRUGO,
 		   joypad_store_boost_weak);
 
 /*----------------------------------------------------------------------------*/
+/*
+ * ATTRIBUTES:
+ *
+ * /sys/devices/platform/rocknix-singleadc-joypad/rumble_enable [rw]
+ */
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_store_rumble_enable(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf,
+					  size_t count)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+	bool enable = simple_strtoul(buf, NULL, 10);
+
+	mutex_lock(&joypad->lock);
+	if (enable && !joypad->rumble_enabled) {
+		joypad->rumble_enabled = true;
+	} else if (!enable && joypad->rumble_enabled) {
+		joypad->rumble_enabled = false;
+		joypad->level = 0;
+		cancel_work_sync(&joypad->play_work);
+		pwm_vibrator_stop(joypad);
+	}
+	mutex_unlock(&joypad->lock);
+	return count;
+}
+
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_show_rumble_enable(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct platform_device *pdev  = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+	return sprintf(buf, "%d\n", joypad->rumble_enabled ? 1 : 0);
+}
+
+/*----------------------------------------------------------------------------*/
+static DEVICE_ATTR(rumble_enable, S_IWUSR | S_IRUGO,
+		   joypad_show_rumble_enable,
+		   joypad_store_rumble_enable);
+
 /*----------------------------------------------------------------------------*/
 static struct attribute *joypad_attrs[] = {
 	&dev_attr_poll_interval.attr,
@@ -750,6 +802,7 @@ static struct attribute *joypad_rumble_attrs[] = {
 	&dev_attr_rumble_period.attr,
 	&dev_attr_rumble_boost_strong.attr,
 	&dev_attr_rumble_boost_weak.attr,
+	&dev_attr_rumble_enable.attr,
 	NULL,
 };
 
@@ -1182,12 +1235,20 @@ static int rumble_play_effect(struct input_dev *dev, void *data, struct ff_effec
 	if (effect->type != FF_RUMBLE)
 		 return 0;
 
+	mutex_lock(&joypad->lock);
+	if (!joypad->rumble_enabled) {
+		mutex_unlock(&joypad->lock);
+		return 0; // Ignore rumble effects if disabled
+	}
+
 	if (effect->u.rumble.strong_magnitude)
 		boosted_level = effect->u.rumble.strong_magnitude + joypad->boost_strong;
 	else
 		boosted_level = effect->u.rumble.weak_magnitude + joypad->boost_weak;
 
 	joypad->level = (u16)CLAMP(boosted_level, 0, 0xffff);
+
+	mutex_unlock(&joypad->lock);
 
 	schedule_work(&joypad->play_work);
 	return 0;
@@ -1801,6 +1862,8 @@ static int joypad_probe(struct platform_device *pdev)
 			 dev_err(dev, "rumble setup failed!(err = %d)\n", error);
 			 return error;
 		}
+
+		joypad->rumble_enabled = true;
 	}
 
 	if (joypad->use_miyoo_serial) {
