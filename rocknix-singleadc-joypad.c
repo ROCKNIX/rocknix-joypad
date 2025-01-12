@@ -206,7 +206,7 @@ struct joypad {
 	u16 level;
 	u16 boost_weak;
 	u16 boost_strong;
-	u16 has_rumble;
+	bool has_rumble;
 
 
 	/* New property to override logic with Miyoo serial approach */
@@ -235,17 +235,6 @@ struct joypad {
 
 extern struct input_dev * joypad_input_g;
 
-/*----------------------------------------------------------------------------*/
-static bool has_rumble(struct device *dev)
-{
-	if (device_property_present(dev, "rumble-boost-weak") ||
-	    device_property_present(dev, "rumble-boost-strong"))
-		return true;
-
-	return false;
-}
-
-/*----------------------------------------------------------------------------*/
 static int pwm_vibrator_start(struct joypad *joypad)
 {
 	struct pwm_state state;
@@ -1320,14 +1309,13 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	}
 
 	/* Rumble setup */
-	if (has_rumble(dev)) {
+	if (joypad->has_rumble) {
 		u32 boost_weak = 0;
 		u32 boost_strong = 0;
 		device_property_read_u32(dev, "rumble-boost-weak", &boost_weak);
 		device_property_read_u32(dev, "rumble-boost-strong", &boost_strong);
 		joypad->boost_weak = boost_weak;
 		joypad->boost_strong = boost_strong;
-		joypad->has_rumble = 1;
 		dev_info(dev, "Boost = %d, %d", boost_weak, boost_strong);
 		input_set_capability(input, EV_FF, FF_RUMBLE);
 		error = input_ff_create_memless(input, joypad, rumble_play_effect);
@@ -1701,6 +1689,11 @@ static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 	dev_info(dev, "%s : adc key cnt = %d, gpio key cnt = %d\n",
 			__func__, joypad->amux_count, joypad->bt_gpio_count);
 
+	joypad->has_rumble =
+		device_property_present(dev, "pwm-names");
+	if (joypad->has_rumble)
+		dev_info(dev, "%s : has rumble\n", __func__);
+
 	joypad->use_miyoo_serial =
 		device_property_present(dev, "rocknix,use-miyoo-serial-joypad");
 	if (joypad->use_miyoo_serial) {
@@ -1794,7 +1787,7 @@ static int joypad_probe(struct platform_device *pdev)
 		return error;
 	}
 
-        if (has_rumble(dev)) {
+        if (joypad->has_rumble) {
 		/* rumble setup */
 		error = sysfs_create_group(&pdev->dev.kobj, &joypad_rumble_attr_group);
 		if (error) {
