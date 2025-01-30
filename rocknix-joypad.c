@@ -1000,7 +1000,11 @@ MODULE_DEVICE_TABLE(of, joypad_of_match);
 /*----------------------------------------------------------------------------*/
 static struct platform_driver joypad_driver = {
 	.probe = joypad_probe,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0))
 	.remove_new = joypad_remove,
+#else
+	.remove = joypad_remove,
+#endif
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = of_match_ptr(joypad_of_match),
