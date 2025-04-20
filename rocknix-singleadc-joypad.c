@@ -64,7 +64,7 @@ struct analog_mux {
 	/* IIO ADC Channel : amux connect channel */
 	struct iio_channel *iio_ch;
 	/* analog mux select(a,b) gpio */
-	int sel_a_gpio, sel_b_gpio;
+	struct gpio_desc *sel_a_gpio, *sel_b_gpio;
 	/* analog mux enable gpio */
 	int en_gpio;
 };
@@ -290,20 +290,20 @@ static int joypad_amux_select(struct analog_mux *amux, int channel)
 
 	switch(channel) {
 		case 0:	/* EVENT (ABS_RY) */
-			gpio_set_value(amux->sel_a_gpio, 0);
-			gpio_set_value(amux->sel_b_gpio, 0);
+			gpiod_set_value(amux->sel_a_gpio, 1);
+			gpiod_set_value(amux->sel_b_gpio, 1);
 			break;
 		case 1:	/* EVENT (ABS_RX) */
-			gpio_set_value(amux->sel_a_gpio, 0);
-			gpio_set_value(amux->sel_b_gpio, 1);
+			gpiod_set_value(amux->sel_a_gpio, 1);
+			gpiod_set_value(amux->sel_b_gpio, 0);
 			break;
 		case 2:	/* EVENT (ABS_Y) */
-			gpio_set_value(amux->sel_a_gpio, 1);
-			gpio_set_value(amux->sel_b_gpio, 0);
+			gpiod_set_value(amux->sel_a_gpio, 0);
+			gpiod_set_value(amux->sel_b_gpio, 1);
 			break;
 		case 3:	/* EVENT (ABS_X) */
-			gpio_set_value(amux->sel_a_gpio, 1);
-			gpio_set_value(amux->sel_b_gpio, 1);
+			gpiod_set_value(amux->sel_a_gpio, 0);
+			gpiod_set_value(amux->sel_b_gpio, 0);
 			break;
 		default:
 			/* amux disanle */
@@ -565,6 +565,7 @@ static int joypad_amux_setup(struct device *dev, struct joypad *joypad)
 	struct analog_mux *amux;
 	enum iio_chan_type type;
 	enum of_gpio_flags flags;
+	long int ret0;
 	int ret;
 
 	/* analog mux control struct init */
@@ -593,32 +594,20 @@ static int joypad_amux_setup(struct device *dev, struct joypad *joypad)
 		return -EINVAL;
 	}
 
-	amux->sel_a_gpio = of_get_named_gpio_flags(dev->of_node,
-				"amux-a-gpios", 0, &flags);
-	if (gpio_is_valid(amux->sel_a_gpio)) {
-		ret = devm_gpio_request(dev, amux->sel_a_gpio, "amux-sel-a");
-		if (ret < 0) {
-			dev_err(dev, "%s : failed to request amux-sel-a %d\n",
-				__func__, amux->sel_a_gpio);
-			goto err_out;
-		}
-		ret = gpio_direction_output(amux->sel_a_gpio, 0);
-		if (ret < 0)
-			goto err_out;
+	amux->sel_a_gpio = devm_gpiod_get(dev, "amux-a", GPIOD_OUT_LOW);
+	if (IS_ERR(amux->sel_a_gpio)) {
+		ret0 = PTR_ERR(amux->sel_a_gpio);
+		dev_err(dev, "%s : failed to request amux-a-gpios %ld\n", __func__, ret0);
+		ret = ( (ret0 >= INT_MIN) && (ret0 <= INT_MAX) ) ? ret0 : -2;
+		goto err_out;
 	}
 
-	amux->sel_b_gpio = of_get_named_gpio_flags(dev->of_node,
-				"amux-b-gpios", 0, &flags);
-	if (gpio_is_valid(amux->sel_b_gpio)) {
-		ret = devm_gpio_request(dev, amux->sel_b_gpio, "amux-sel-b");
-		if (ret < 0) {
-			dev_err(dev, "%s : failed to request amux-sel-b %d\n",
-				__func__, amux->sel_b_gpio);
-			goto err_out;
-		}
-		ret = gpio_direction_output(amux->sel_b_gpio, 0);
-		if (ret < 0)
-			goto err_out;
+	amux->sel_b_gpio = devm_gpiod_get(dev, "amux-b", GPIOD_OUT_LOW);
+	if (IS_ERR(amux->sel_b_gpio)) {
+		ret0 = PTR_ERR(amux->sel_b_gpio);
+		dev_err(dev, "%s : failed to request amux-b-gpios %ld\n", __func__, ret0);
+		ret = ( (ret0 >= INT_MIN) && (ret0 <= INT_MAX) ) ? ret0 : -2;
+		goto err_out;
 	}
 
 	amux->en_gpio = of_get_named_gpio_flags(dev->of_node,
