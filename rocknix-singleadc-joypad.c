@@ -1446,27 +1446,6 @@ static int joypad_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void joypad_remove(struct platform_device *pdev)
-{
-	struct joypad *joypad = platform_get_drvdata(pdev);
-
-	if (joypad->has_rumble)
-		sysfs_remove_group(&pdev->dev.kobj, &joypad_rumble_attr_group);
-
-	if (joypad->use_miyoo_serial) {
-		/* Cancel any delayed work if it's not run yet */
-		cancel_delayed_work_sync(&joypad->miyoo_init_work);
-		if (joypad->miyoo_thread) {
-			kthread_stop(joypad->miyoo_thread);
-			joypad->miyoo_thread = NULL;
-		}
-		if (joypad->miyoo_filp) {
-			filp_close(joypad->miyoo_filp, NULL);
-			joypad->miyoo_filp = NULL;
-		}
-		dev_info(joypad->dev, "Miyoo serial logic stopped.\n");
-	}
-}
 /*----------------------------------------------------------------------------*/
 static const struct of_device_id joypad_of_match[] = {
 	{ .compatible = "rocknix-singleadc-joypad", },
@@ -1478,11 +1457,6 @@ MODULE_DEVICE_TABLE(of, joypad_of_match);
 /*----------------------------------------------------------------------------*/
 static struct platform_driver joypad_driver = {
 	.probe = joypad_probe,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0))
-	.remove_new = joypad_remove,
-#else
-	.remove = joypad_remove,
-#endif
 	.driver = {
 		.name = DRV_NAME,
 		.pm = &joypad_pm_ops,
