@@ -596,7 +596,7 @@ static int joypad_amux_setup(struct device *dev, struct joypad *joypad)
 	amux->sel_a_gpio = of_get_named_gpio_flags(dev->of_node,
 				"amux-a-gpios", 0, &flags);
 	if (gpio_is_valid(amux->sel_a_gpio)) {
-		ret = devm_gpio_request(dev, amux->sel_a_gpio, "amux-sel-a");
+		ret = devm_gpio_request_one(dev, amux->sel_a_gpio, GPIOF_IN, "amux-sel-a");
 		if (ret < 0) {
 			dev_err(dev, "%s : failed to request amux-sel-a %d\n",
 				__func__, amux->sel_a_gpio);
@@ -610,7 +610,7 @@ static int joypad_amux_setup(struct device *dev, struct joypad *joypad)
 	amux->sel_b_gpio = of_get_named_gpio_flags(dev->of_node,
 				"amux-b-gpios", 0, &flags);
 	if (gpio_is_valid(amux->sel_b_gpio)) {
-		ret = devm_gpio_request(dev, amux->sel_b_gpio, "amux-sel-b");
+		ret = devm_gpio_request_one(dev, amux->sel_b_gpio, GPIOF_IN, "amux-sel-b");
 		if (ret < 0) {
 			dev_err(dev, "%s : failed to request amux-sel-b %d\n",
 				__func__, amux->sel_b_gpio);
@@ -624,7 +624,7 @@ static int joypad_amux_setup(struct device *dev, struct joypad *joypad)
 	amux->en_gpio = of_get_named_gpio_flags(dev->of_node,
 				"amux-en-gpios", 0, &flags);
 	if (gpio_is_valid(amux->en_gpio)) {
-		ret = devm_gpio_request(dev, amux->en_gpio, "amux-en");
+		ret = devm_gpio_request_one(dev, amux->en_gpio, GPIOF_IN, "amux-en");
 		if (ret < 0) {
 			dev_err(dev, "%s : failed to request amux-en %d\n",
 				__func__, amux->en_gpio);
