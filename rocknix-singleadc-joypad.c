@@ -520,8 +520,18 @@ static void joypad_open(struct input_polled_dev *poll_dev)
 
 	for (nbtn = 0; nbtn < joypad->bt_gpio_count; nbtn++) {
 		struct bt_gpio *gpio = &joypad->gpios[nbtn];
-		gpio->old_value = gpio->active_level ? 0 : 1;
+		int val = gpio_get_value_cansleep(gpio->num);
+		if (val < 0)
+			val = gpio->active_level ? 0 : 1;
+		gpio->old_value = val;
+
+		// Immediately report the current state
+		input_event(poll_dev->input, gpio->report_type,
+					gpio->linux_code,
+					(val == gpio->active_level) ? 1 : 0);
 	}
+	input_sync(poll_dev->input);
+
 	for (nbtn = 0; nbtn < joypad->amux_count; nbtn++) {
 		struct bt_adc *adc = &joypad->adcs[nbtn];
 
