@@ -499,6 +499,7 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	struct input_polled_dev *poll_dev;
 	struct input_dev *input;
 	int nbtn, error;
+	u32 joypad_bustype = BUS_USB;
 	u32 joypad_vendor = 0;
 	u32 joypad_revision = 0;
 	u32 joypad_product = 0;
@@ -522,11 +523,11 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	device_property_read_string(dev, "joypad-name", &input->name);
 	input->phys = DRV_NAME"/input0";
 
+	device_property_read_u32(dev, "joypad-bustype", &joypad_bustype);
 	device_property_read_u32(dev, "joypad-vendor", &joypad_vendor);
 	device_property_read_u32(dev, "joypad-revision", &joypad_revision);
 	device_property_read_u32(dev, "joypad-product", &joypad_product);
-	//input->id.bustype = BUS_HOST;
-	input->id.bustype = BUS_USB;
+	input->id.bustype = (u16)joypad_bustype;
 	input->id.vendor  = (u16)joypad_vendor;
 	input->id.product = (u16)joypad_product;
 	input->id.version = (u16)joypad_revision;
