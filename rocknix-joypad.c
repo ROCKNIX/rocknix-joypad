@@ -30,6 +30,8 @@
 #define	ADC_TUNING_DEFAULT	180
 
 struct bt_adc {
+	/* axis name (e.g. "x", "ry", "z") */
+	const char* axis;
 	/* report value (mV) */
 	int value;
 	/* report type */
@@ -78,14 +80,6 @@ struct joypad {
 	int chan_count;
 	/* analog button */
 	struct bt_adc *adcs;
-
-	/* report reference point */
-	bool invert_absx;
-	bool invert_absy;
-	bool invert_absrx;
-	bool invert_absry;
-	bool invert_absz;
-	bool invert_absrz;
 
 	/* report interval (ms) */
 	int bt_gpio_count;
@@ -317,9 +311,20 @@ static int joypad_iochannel_setup(struct device *dev, struct joypad *joypad)
 }
 
 /*----------------------------------------------------------------------------*/
+void adc_setup_axis(struct device *dev, struct bt_adc *adc, const char* axis);
+
 static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 {
 	int nbtn;
+	const char* mapping_r_l[] = {"rx", "ry", "x", "y", "rz", "z"};
+	const char* mapping_l_r[] = {"x", "y", "rx", "ry", "z", "rz"};
+	const char** mapping;
+
+	/* protect the arrays */
+	if (joypad->chan_count > 6) {
+		dev_err(dev, "%s io channel count(%d) error!",
+				__func__, joypad->chan_count);
+	};
 
 	/* adc button struct init */
 	joypad->adcs = devm_kzalloc(dev, joypad->chan_count *
@@ -327,6 +332,12 @@ static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 	if (!joypad->adcs) {
 		dev_err(dev, "%s devm_kzmalloc error!", __func__);
 		return -ENOMEM;
+	}
+
+	if (device_property_read_bool(dev, "abs-left-first")) {
+		mapping = mapping_l_r;
+	} else {
+		mapping = mapping_r_l;
 	}
 
 	for (nbtn = 0; nbtn < joypad->chan_count; nbtn++) {
@@ -343,92 +354,56 @@ static int joypad_adc_setup(struct device *dev, struct joypad *joypad)
 		adc->channel = nbtn;
 		adc->invert = false;
 
-		switch (nbtn) {
-			case 0:
-				if (joypad->invert_absry)
-					adc->invert = true;
-				adc->report_type = ABS_RY;
-				if (device_property_read_u32(dev,
-					"abs_ry-p-tuning",
-					&adc->tuning_p))
-					adc->tuning_p = ADC_TUNING_DEFAULT;
-				if (device_property_read_u32(dev,
-					"abs_ry-n-tuning",
-					&adc->tuning_n))
-					adc->tuning_n = ADC_TUNING_DEFAULT;
-				break;
-			case 1:
-				if (joypad->invert_absrx)
-					adc->invert = true;
-				adc->report_type = ABS_RX;
-				if (device_property_read_u32(dev,
-					"abs_rx-p-tuning",
-					&adc->tuning_p))
-					adc->tuning_p = ADC_TUNING_DEFAULT;
-				if (device_property_read_u32(dev,
-					"abs_rx-n-tuning",
-					&adc->tuning_n))
-					adc->tuning_n = ADC_TUNING_DEFAULT;
-				break;
-			case 2:
-				if (joypad->invert_absy)
-					adc->invert = true;
-				adc->report_type = ABS_Y;
-				if (device_property_read_u32(dev,
-					"abs_y-p-tuning",
-					&adc->tuning_p))
-					adc->tuning_p = ADC_TUNING_DEFAULT;
-				if (device_property_read_u32(dev,
-					"abs_y-n-tuning",
-					&adc->tuning_n))
-					adc->tuning_n = ADC_TUNING_DEFAULT;
-				break;
-			case 3:
-				if (joypad->invert_absx)
-					adc->invert = true;
-				adc->report_type = ABS_X;
-				if (device_property_read_u32(dev,
-					"abs_x-p-tuning",
-					&adc->tuning_p))
-					adc->tuning_p = ADC_TUNING_DEFAULT;
-				if (device_property_read_u32(dev,
-					"abs_x-n-tuning",
-					&adc->tuning_n))
-					adc->tuning_n = ADC_TUNING_DEFAULT;
-				break;
-			case 4:
-				if (joypad->invert_absz)
-					adc->invert = true;
-				adc->report_type = ABS_Z;
-				if (device_property_read_u32(dev,
-					"abs_z-p-tuning",
-					&adc->tuning_p))
-					adc->tuning_p = ADC_TUNING_DEFAULT;
-				if (device_property_read_u32(dev,
-					"abs_z-n-tuning",
-					&adc->tuning_n))
-					adc->tuning_n = ADC_TUNING_DEFAULT;
-				break;
-			case 5:
-				if (joypad->invert_absrz)
-					adc->invert = true;
-				adc->report_type = ABS_RZ;
-				if (device_property_read_u32(dev,
-					"abs_rz-p-tuning",
-					&adc->tuning_p))
-					adc->tuning_p = ADC_TUNING_DEFAULT;
-				if (device_property_read_u32(dev,
-					"abs_rz-n-tuning",
-					&adc->tuning_n))
-					adc->tuning_n = ADC_TUNING_DEFAULT;
-				break;
-			default :
-				dev_err(dev, "%s io channel count(%d) error!",
-					__func__, nbtn);
-				return -EINVAL;
-		}
+		adc_setup_axis(dev, adc, mapping[nbtn]);
 	}
 	return	0;
+}
+
+void adc_setup_axis(struct device *dev, struct bt_adc *adc, const char* axis)
+{
+	uint32_t invert;
+	char buf[16];   /* "abs_ry-n-tuning" is 15 bytes, plus '\0' = 16 */
+
+	adc->axis = axis;
+	if (axis[0] == 'r') {
+		switch (axis[1]) {
+			case 'x': adc->report_type = ABS_RX; break;
+			case 'y': adc->report_type = ABS_RY; break;
+			default: adc->report_type = ABS_RZ; break;
+		};
+	} else {
+		switch (axis[0]) {
+			case 'x': adc->report_type = ABS_X; break;
+			case 'y': adc->report_type = ABS_Y; break;
+			default: adc->report_type = ABS_Z; break;
+		};
+	};
+
+	/* simple boolean property is not overlay-friendly,
+	 * so make it compatible with old approach but also overridable */
+	snprintf(&buf[0], 16, "invert-abs%s", axis);
+	if (device_property_present(dev, buf)) {
+		if (device_property_read_u32(dev, buf, &invert)) {
+			/* non-integer: present = invert */
+			adc->invert = true;
+		} else {
+			/* int value: 0 = normal, 1 = invert */
+			adc->invert = (invert != 0);
+		}
+	} else {
+		/* no property: normal */
+		adc->invert = false;
+	}
+
+	snprintf(&buf[0], 16, "abs_%s-p-tuning", axis);
+	if (device_property_read_u32(dev, buf, &adc->tuning_p)) {
+		adc->tuning_p = ADC_TUNING_DEFAULT;
+	}
+
+	snprintf(&buf[0], 16, "abs_%s-n-tuning", axis);
+	if (device_property_read_u32(dev, buf, &adc->tuning_n)) {
+		adc->tuning_n = ADC_TUNING_DEFAULT;
+	}
 }
 
 /*----------------------------------------------------------------------------*/
@@ -543,14 +518,14 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 				joypad->bt_adc_fuzz,
 				joypad->bt_adc_flat);
 		dev_info(dev,
-			"%s : SCALE = %d, ABS min = %d, max = %d,"
+			"%s : axis %s: SCALE = %d, ABS min = %d, max = %d,"
 			" fuzz = %d, flat = %d, deadzone = %d\n",
-			__func__, adc->scale, adc->min, adc->max,
+			__func__, adc->axis, adc->scale, adc->min, adc->max,
 			joypad->bt_adc_fuzz, joypad->bt_adc_flat,
 			joypad->bt_adc_deadzone);
 		dev_info(dev,
-			"%s : adc tuning_p = %d, adc_tuning_n = %d\n\n",
-			__func__, adc->tuning_p, adc->tuning_n);
+			"%s : axis %s: adc tuning_p = %d, adc tuning_n = %d invert = %d\n",
+			__func__, adc->axis, adc->tuning_p, adc->tuning_n, adc->invert);
 	}
 
 	/* GPIO key setup */
@@ -600,16 +575,6 @@ static int joypad_dt_parse(struct device *dev, struct joypad *joypad)
 				&joypad->poll_interval);
 
 	joypad->auto_repeat = device_property_present(dev, "autorepeat");
-
-	/* change the report reference point? (ADC MAX - read value) */
-	joypad->invert_absx = device_property_present(dev, "invert-absx");
-	joypad->invert_absy = device_property_present(dev, "invert-absy");
-	joypad->invert_absz = device_property_present(dev, "invert-absz");
-	joypad->invert_absrx = device_property_present(dev, "invert-absrx");
-	joypad->invert_absry = device_property_present(dev, "invert-absry");
-	joypad->invert_absrz = device_property_present(dev, "invert-absrz");
-	dev_info(dev, "%s : invert-absx = %d, inveret-absy = %d, invert-absz = %d, invert-absrx = %d, invert-absry = %d, invert-absrz = %d\n",
-		__func__, joypad->invert_absx, joypad->invert_absy, joypad->invert_absz, joypad->invert_absrx, joypad->invert_absry, joypad->invert_absrz);
 
 	joypad->bt_gpio_count = device_get_child_node_count(dev);
 
