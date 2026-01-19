@@ -124,7 +124,7 @@ static void joypad_gpio_check(struct input_polled_dev *poll_dev)
 			dev_err(joypad->dev, "failed to get gpio state\n");
 			continue;
 		}
-		value = gpio_get_value(gpio->num);
+		value = gpio_get_value_cansleep(gpio->num);
 		if (value != gpio->old_value) {
 			input_event(poll_dev->input,
 				gpio->report_type,
