@@ -286,28 +286,28 @@ static void pwm_vibrator_play_work(struct work_struct *work)
 static int joypad_amux_select(struct analog_mux *amux, int channel)
 {
 	/* select mux channel */
-	gpio_set_value(amux->en_gpio, 0);
+	gpio_set_value_cansleep(amux->en_gpio, 0);
 
 	switch(channel) {
 		case 0:	/* EVENT (ABS_RY) */
-			gpio_set_value(amux->sel_a_gpio, 0);
-			gpio_set_value(amux->sel_b_gpio, 0);
+			gpio_set_value_cansleep(amux->sel_a_gpio, 0);
+			gpio_set_value_cansleep(amux->sel_b_gpio, 0);
 			break;
 		case 1:	/* EVENT (ABS_RX) */
-			gpio_set_value(amux->sel_a_gpio, 0);
-			gpio_set_value(amux->sel_b_gpio, 1);
+			gpio_set_value_cansleep(amux->sel_a_gpio, 0);
+			gpio_set_value_cansleep(amux->sel_b_gpio, 1);
 			break;
 		case 2:	/* EVENT (ABS_Y) */
-			gpio_set_value(amux->sel_a_gpio, 1);
-			gpio_set_value(amux->sel_b_gpio, 0);
+			gpio_set_value_cansleep(amux->sel_a_gpio, 1);
+			gpio_set_value_cansleep(amux->sel_b_gpio, 0);
 			break;
 		case 3:	/* EVENT (ABS_X) */
-			gpio_set_value(amux->sel_a_gpio, 1);
-			gpio_set_value(amux->sel_b_gpio, 1);
+			gpio_set_value_cansleep(amux->sel_a_gpio, 1);
+			gpio_set_value_cansleep(amux->sel_b_gpio, 1);
 			break;
 		default:
 			/* amux disanle */
-			gpio_set_value(amux->en_gpio, 1);
+			gpio_set_value_cansleep(amux->en_gpio, 1);
 			return -1;
 	}
 	/* mux swtiching speed : 35ns(on) / 9ns(off) */
@@ -398,7 +398,7 @@ static void joypad_gpio_check(struct input_polled_dev *poll_dev)
 			dev_err(joypad->dev, "failed to get gpio state\n");
 			continue;
 		}
-		value = gpio_get_value(gpio->num);
+		value = gpio_get_value_cansleep(gpio->num);
 		if (value != gpio->old_value) {
 			input_event(poll_dev->input,
 				gpio->report_type,
