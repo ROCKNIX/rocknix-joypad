@@ -636,7 +636,7 @@ static int joypad_probe(struct platform_device *pdev)
 }
 
 /*----------------------------------------------------------------------------*/
-static int joypad_remove(struct platform_device *pdev)
+static void joypad_remove(struct platform_device *pdev)
 {
 	struct joypad *joypad = platform_get_drvdata(pdev);
 
@@ -646,7 +646,6 @@ static int joypad_remove(struct platform_device *pdev)
 	mutex_unlock(&joypad->lock);
 
 	dev_info(&pdev->dev, "%s : removed\n", __func__);
-	return 0;
 }
 
 /*----------------------------------------------------------------------------*/
