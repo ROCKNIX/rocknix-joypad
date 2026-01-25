@@ -636,6 +636,20 @@ static int joypad_probe(struct platform_device *pdev)
 }
 
 /*----------------------------------------------------------------------------*/
+static int joypad_remove(struct platform_device *pdev)
+{
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	/* Make sure we stop polling */
+	mutex_lock(&joypad->lock);
+	joypad->enable = false;
+	mutex_unlock(&joypad->lock);
+
+	dev_info(&pdev->dev, "%s : removed\n", __func__);
+	return 0;
+}
+
+/*----------------------------------------------------------------------------*/
 static const struct of_device_id joypad_of_match[] = {
 	{ .compatible = "rocknix-joypad", },
 	{},
@@ -646,6 +660,7 @@ MODULE_DEVICE_TABLE(of, joypad_of_match);
 /*----------------------------------------------------------------------------*/
 static struct platform_driver joypad_driver = {
 	.probe = joypad_probe,
+	.remove = joypad_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = of_match_ptr(joypad_of_match),
