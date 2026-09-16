@@ -1455,5 +1455,6 @@ MODULE_DESCRIPTION("ROCKNIX singleadc joypad driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:" DRV_NAME);
 MODULE_INFO(intree, "Y");
+MODULE_IMPORT_NS("IIO_CONSUMER");
 
 /*----------------------------------------------------------------------------*/
