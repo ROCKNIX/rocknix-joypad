@@ -263,13 +263,13 @@ static void pwm_vibrator_play_work(struct work_struct *work)
 	struct joypad *joypad = container_of(work,
 					    struct joypad, play_work);
 	mutex_lock(&joypad->lock);
-	if (!joypad->rumble_enabled) {
+	if (!READ_ONCE(joypad->rumble_enabled)) {
 		pwm_vibrator_stop(joypad);
 		mutex_unlock(&joypad->lock);
 		return;
 	}
 
-	if (joypad->level)
+	if (READ_ONCE(joypad->level))
 		 pwm_vibrator_start(joypad);
 	else
 		 pwm_vibrator_stop(joypad);
@@ -345,16 +345,27 @@ static ssize_t joypad_store_rumble_enable(struct device *dev,
 	struct joypad *joypad = platform_get_drvdata(pdev);
 	bool enable = simple_strtoul(buf, NULL, 10);
 
+	bool stop = false;
+
+	/*
+	 * cancel_work_sync() must run outside the lock: play_work takes it too, so waiting for
+	 * the work while holding it could never finish.
+	 */
 	mutex_lock(&joypad->lock);
 	if (enable && !joypad->rumble_enabled) {
-		joypad->rumble_enabled = true;
+		WRITE_ONCE(joypad->rumble_enabled, true);
 	} else if (!enable && joypad->rumble_enabled) {
-		joypad->rumble_enabled = false;
-		joypad->level = 0;
-		cancel_work_sync(&joypad->play_work);
-		pwm_vibrator_stop(joypad);
+		WRITE_ONCE(joypad->rumble_enabled, false);
+		WRITE_ONCE(joypad->level, 0);
+		stop = true;
 	}
 	mutex_unlock(&joypad->lock);
+	if (stop) {
+		cancel_work_sync(&joypad->play_work);
+		mutex_lock(&joypad->lock);
+		pwm_vibrator_stop(joypad);
+		mutex_unlock(&joypad->lock);
+	}
 	return count;
 }
 
@@ -773,20 +784,22 @@ static int rumble_play_effect(struct input_dev *dev, void *data, struct ff_effec
 	if (effect->type != FF_RUMBLE)
 		 return 0;
 
-	mutex_lock(&joypad->lock);
-	if (!joypad->rumble_enabled) {
-		mutex_unlock(&joypad->lock);
+	/*
+	 * ff-memless calls this in atomic context (dev->event_lock held with interrupts off, also
+	 * from its effect timer), so it must not sleep: no joypad->lock here. play_work holds that
+	 * mutex while it applies the PWM state (pwm_apply_might_sleep), and meeting it here (a
+	 * "stop" and a "start" back to back, i.e. every change of strength) hard-locked the device
+	 * with the motor on. Only store the level; play_work applies it under the lock.
+	 */
+	if (!READ_ONCE(joypad->rumble_enabled))
 		return 0; // Ignore rumble effects if disabled
-	}
 
 	if (effect->u.rumble.strong_magnitude)
 		boosted_level = effect->u.rumble.strong_magnitude + joypad->boost_strong;
 	else
 		boosted_level = effect->u.rumble.weak_magnitude + joypad->boost_weak;
 
-	joypad->level = (u16)CLAMP(boosted_level, 0, 0xffff);
-
-	mutex_unlock(&joypad->lock);
+	WRITE_ONCE(joypad->level, (u16)CLAMP(boosted_level, 0, 0xffff));
 
 	schedule_work(&joypad->play_work);
 	return 0;
