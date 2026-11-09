@@ -231,13 +231,13 @@ struct joypad {
 
 extern struct input_dev * joypad_input_g;
 
-static int pwm_vibrator_start(struct joypad *joypad)
+static int pwm_vibrator_start(struct joypad *joypad, u16 level)
 {
 	struct pwm_state state;
 	int err;
 
 	pwm_get_state(joypad->pwm, &state);
-	pwm_set_relative_duty_cycle(&state, joypad->level, 0xffff);
+	pwm_set_relative_duty_cycle(&state, level, 0xffff);
 	state.enabled = true;
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
@@ -262,6 +262,8 @@ static void pwm_vibrator_play_work(struct work_struct *work)
 {
 	struct joypad *joypad = container_of(work,
 					    struct joypad, play_work);
+	u16 level;
+
 	mutex_lock(&joypad->lock);
 	if (!READ_ONCE(joypad->rumble_enabled)) {
 		pwm_vibrator_stop(joypad);
@@ -269,8 +271,10 @@ static void pwm_vibrator_play_work(struct work_struct *work)
 		return;
 	}
 
-	if (READ_ONCE(joypad->level))
-		 pwm_vibrator_start(joypad);
+	/* Read level once, so the check and the duty cycle use the same value. */
+	level = READ_ONCE(joypad->level);
+	if (level)
+		 pwm_vibrator_start(joypad, level);
 	else
 		 pwm_vibrator_stop(joypad);
 
@@ -1358,9 +1362,16 @@ static int __maybe_unused joypad_resume(struct device *dev)
 {
 	struct platform_device *pdev  = to_platform_device(dev);
 	struct joypad *joypad = platform_get_drvdata(pdev);
+	u16 level;
+
 	if (joypad->has_rumble) {
-		if (joypad->level)
-			 pwm_vibrator_start(joypad);
+		/*
+		 * level can be left non-zero after rumble was disabled (a play
+		 * callback racing the rumble_enable store), so check both.
+		 */
+		level = READ_ONCE(joypad->level);
+		if (READ_ONCE(joypad->rumble_enabled) && level)
+			 pwm_vibrator_start(joypad, level);
 	}
 	return 0;
 }
